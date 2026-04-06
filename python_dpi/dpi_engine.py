@@ -65,7 +65,11 @@ class _Rules:
         print(f"[Rules] Allowed domain: {domain}")
 
     def block_regex(self, pattern: str) -> None:
-        compiled = re.compile(pattern, re.IGNORECASE)
+        try:
+            compiled = re.compile(pattern, re.IGNORECASE)
+        except re.error as exc:
+            print(f"[Rules] Invalid regex pattern '{pattern}': {exc}")
+            return
         self.blocked_regex.append((pattern, compiled))
         print(f"[Rules] Blocked regex: {pattern}")
 
