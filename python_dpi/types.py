@@ -5,6 +5,14 @@ from enum import IntEnum
 import ipaddress
 
 
+class DetectionMethod:
+    UNKNOWN = "UNKNOWN"
+    TLS_SNI = "TLS_SNI"
+    HTTP_HOST = "HTTP_HOST"
+    DNS = "DNS"
+    PORT_BASED = "PORT_BASED"
+
+
 class AppType(IntEnum):
     UNKNOWN = 0
     HTTP = 1
@@ -132,3 +140,35 @@ class PacketJob:
     tcp_flags: int = 0
     payload_offset: int = 0
     payload_length: int = 0
+
+
+@dataclass(slots=True)
+class Flow:
+    tuple: FiveTuple
+    app_type: AppType = AppType.UNKNOWN
+    sni: str = ""
+    blocked: bool = False
+    block_reason: str = ""
+    detection_method: str = DetectionMethod.UNKNOWN
+    packet_count: int = 0
+    byte_count: int = 0
+    first_seen_timestamp: int = 0
+    last_seen_timestamp: int = 0
+    is_suspicious: bool = False
+    suspicious_reason: str = ""
+    anomaly_score: float = 0.0
+    risk_score: float = 0.0
+
+    @property
+    def duration_seconds(self) -> int:
+        if self.packet_count == 0:
+            return 0
+        if self.last_seen_timestamp < self.first_seen_timestamp:
+            return 0
+        return self.last_seen_timestamp - self.first_seen_timestamp
+
+    @property
+    def avg_packet_size(self) -> float:
+        if self.packet_count == 0:
+            return 0.0
+        return self.byte_count / self.packet_count

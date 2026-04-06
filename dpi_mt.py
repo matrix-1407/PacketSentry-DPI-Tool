@@ -9,9 +9,10 @@ import sys
 
 from python_dpi.packet_parser import parse
 from python_dpi.pcap_reader import PcapReader
+from python_dpi.reporting import write_json_report
 from python_dpi.sni_extractor import extract_http_host, extract_sni
 from python_dpi.thread_safe_queue import ThreadSafeQueue
-from python_dpi.types import AppType, FiveTuple, PacketJob, app_type_to_string, ip_str_to_uint32, sni_to_app_type
+from python_dpi.types import AppType, DetectionMethod, FiveTuple, Flow, PacketJob, app_type_to_string, ip_str_to_uint32, sni_to_app_type
 
 
 class Rules:
@@ -39,27 +40,20 @@ class Rules:
 
     def block_domain(self, domain: str) -> None:
         with self._lock:
-            self.blocked_domains.append(domain)
+            self.blocked_domains.append(domain.lower())
         print(f"[Rules] Blocked domain: {domain}")
 
-    def is_blocked(self, src_ip: int, app: AppType, sni: str) -> bool:
+    def evaluate(self, src_ip: int, app: AppType, sni: str) -> tuple[bool, str]:
         with self._lock:
             if src_ip in self.blocked_ips:
-                return True
+                return True, "Blocked by IP rule"
             if app in self.blocked_apps:
-                return True
-            return any(domain in sni for domain in self.blocked_domains)
-
-
-class FlowEntry:
-    def __init__(self, tuple_value: FiveTuple) -> None:
-        self.tuple = tuple_value
-        self.app_type = AppType.UNKNOWN
-        self.sni = ""
-        self.packets = 0
-        self.bytes = 0
-        self.blocked = False
-        self.classified = False
+                return True, f"Blocked by App rule: {app_type_to_string(app)}"
+            host = sni.lower()
+            for domain in self.blocked_domains:
+                if domain in host:
+                    return True, f"Blocked by Domain rule: {domain}"
+            return False, ""
 
 
 class Stats:
@@ -88,7 +82,7 @@ class FastPath:
         self.stats = stats
         self.output_queue = output_queue
         self.input_queue: ThreadSafeQueue[PacketJob] = ThreadSafeQueue(10000)
-        self.flows: dict[FiveTuple, FlowEntry] = {}
+        self.flows: dict[FiveTuple, Flow] = {}
         self.running = False
         self.thread: threading.Thread | None = None
         self.processed_count = 0
@@ -113,16 +107,21 @@ class FastPath:
 
             flow = self.flows.get(pkt.tuple)
             if flow is None:
-                flow = FlowEntry(pkt.tuple)
+                flow = Flow(pkt.tuple)
                 self.flows[pkt.tuple] = flow
-            flow.packets += 1
-            flow.bytes += len(pkt.data)
+            flow.packet_count += 1
+            flow.byte_count += len(pkt.data)
+            if flow.packet_count == 1:
+                flow.first_seen_timestamp = pkt.ts_sec
+            flow.last_seen_timestamp = pkt.ts_sec
 
-            if not flow.classified:
-                self.classify_flow(pkt, flow)
+            self.classify_flow(pkt, flow)
 
             if not flow.blocked:
-                flow.blocked = self.rules.is_blocked(pkt.tuple.src_ip, flow.app_type, flow.sni)
+                blocked, reason = self.rules.evaluate(pkt.tuple.src_ip, flow.app_type, flow.sni)
+                flow.blocked = blocked
+                if blocked:
+                    flow.block_reason = reason
 
             self.stats.record_app(flow.app_type, flow.sni)
 
@@ -132,7 +131,10 @@ class FastPath:
                 self.stats.forwarded += 1
                 self.output_queue.push(pkt)
 
-    def classify_flow(self, pkt: PacketJob, flow: FlowEntry) -> None:
+    def classify_flow(self, pkt: PacketJob, flow: Flow) -> None:
+        if flow.app_type not in (AppType.UNKNOWN, AppType.HTTP, AppType.HTTPS) and flow.sni:
+            return
+
         payload = pkt.data[pkt.payload_offset : pkt.payload_offset + pkt.payload_length]
 
         if pkt.tuple.dst_port == 443 and len(payload) > 5:
@@ -140,7 +142,7 @@ class FastPath:
             if sni:
                 flow.sni = sni
                 flow.app_type = sni_to_app_type(sni)
-                flow.classified = True
+                flow.detection_method = DetectionMethod.TLS_SNI
                 return
 
         if pkt.tuple.dst_port == 80 and len(payload) > 10:
@@ -148,18 +150,20 @@ class FastPath:
             if host:
                 flow.sni = host
                 flow.app_type = sni_to_app_type(host)
-                flow.classified = True
+                flow.detection_method = DetectionMethod.HTTP_HOST
                 return
 
         if pkt.tuple.dst_port == 53 or pkt.tuple.src_port == 53:
             flow.app_type = AppType.DNS
-            flow.classified = True
+            flow.detection_method = DetectionMethod.DNS
             return
 
-        if pkt.tuple.dst_port == 443:
+        if flow.app_type == AppType.UNKNOWN and pkt.tuple.dst_port == 443:
             flow.app_type = AppType.HTTPS
-        elif pkt.tuple.dst_port == 80:
+            flow.detection_method = DetectionMethod.PORT_BASED
+        elif flow.app_type == AppType.UNKNOWN and pkt.tuple.dst_port == 80:
             flow.app_type = AppType.HTTP
+            flow.detection_method = DetectionMethod.PORT_BASED
 
 
 class LoadBalancer:
@@ -222,7 +226,7 @@ class DPIEngine:
     def block_domain(self, domain: str) -> None:
         self.rules.block_domain(domain)
 
-    def process(self, input_file: str, output_file: str) -> bool:
+    def process(self, input_file: str, output_file: str, json_output_file: str = "report.json") -> bool:
         reader = PcapReader()
         if not reader.open(input_file):
             return False
@@ -310,6 +314,24 @@ class DPIEngine:
         output_thread.join()
         output.close()
 
+        all_flows: dict[FiveTuple, Flow] = {}
+        for fp in self.fps:
+            all_flows.update(fp.flows)
+
+        if json_output_file:
+            write_json_report(
+                json_output_file,
+                all_flows,
+                {
+                    "total_packets": self.stats.total_packets,
+                    "total_bytes": self.stats.total_bytes,
+                    "forwarded": self.stats.forwarded,
+                    "dropped": self.stats.dropped,
+                    "non_ip_or_unparsed": 0,
+                },
+            )
+            print(f"JSON report written to: {json_output_file}")
+
         self.print_report()
         return True
 
@@ -359,6 +381,7 @@ Options:
   --block-ip <ip>        Block source IP
   --block-app <app>      Block application (YouTube, Facebook, etc.)
   --block-domain <dom>   Block domain (substring match)
+    --json-output <file>   Write JSON report (default: report.json)
   --lbs <n>              Number of load balancer threads (default: 2)
   --fps <n>              FP threads per LB (default: 2)
 """
@@ -377,6 +400,7 @@ def main() -> int:
     parser.add_argument("--block-ip", action="append", default=[])
     parser.add_argument("--block-app", action="append", default=[])
     parser.add_argument("--block-domain", action="append", default=[])
+    parser.add_argument("--json-output", default="report.json")
     parser.add_argument("--lbs", type=int, default=2)
     parser.add_argument("--fps", type=int, default=2)
     args = parser.parse_args()
@@ -393,7 +417,7 @@ def main() -> int:
     for dom in args.block_domain:
         engine.block_domain(dom)
 
-    ok = engine.process(args.input, args.output)
+    ok = engine.process(args.input, args.output, json_output_file=args.json_output)
     if not ok:
         return 1
     print(f"\nOutput written to: {args.output}")

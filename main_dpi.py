@@ -16,6 +16,7 @@ Options:
   --block-app <app>
   --block-domain <dom>
   --rules <file>
+    --json-output <file>
   --lbs <n>
   --fps <n>
   --verbose
@@ -36,6 +37,7 @@ def main() -> int:
     parser.add_argument("--block-app", action="append", default=[])
     parser.add_argument("--block-domain", action="append", default=[])
     parser.add_argument("--rules", default="")
+    parser.add_argument("--json-output", default="report.json")
     parser.add_argument("--lbs", type=int, default=2)
     parser.add_argument("--fps", type=int, default=2)
     parser.add_argument("--verbose", action="store_true")
@@ -68,7 +70,7 @@ def main() -> int:
     for domain in args.block_domain:
         engine.block_domain(domain)
 
-    if not engine.process_file(args.input_file, args.output_file):
+    if not engine.process_file(args.input_file, args.output_file, json_output_file=args.json_output):
         print("Failed to process file")
         return 1
 

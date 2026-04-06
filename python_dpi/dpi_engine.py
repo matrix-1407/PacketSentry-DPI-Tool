@@ -6,8 +6,9 @@ import struct
 
 from .packet_parser import parse
 from .pcap_reader import PcapReader
+from .reporting import write_json_report
 from .sni_extractor import extract_http_host, extract_sni
-from .types import AppType, FiveTuple, app_type_to_string, ip_str_to_uint32, sni_to_app_type
+from .types import AppType, DetectionMethod, FiveTuple, Flow, app_type_to_string, ip_str_to_uint32, sni_to_app_type
 
 
 @dataclass(slots=True)
@@ -16,14 +17,6 @@ class EngineConfig:
     fps_per_lb: int = 2
     rules_file: str = ""
     verbose: bool = False
-
-
-class _FlowState:
-    def __init__(self, tuple_value: FiveTuple) -> None:
-        self.tuple = tuple_value
-        self.app_type = AppType.UNKNOWN
-        self.sni = ""
-        self.blocked = False
 
 
 class _Rules:
@@ -50,13 +43,16 @@ class _Rules:
         self.blocked_domains.append(domain.lower())
         print(f"[Rules] Blocked domain: {domain}")
 
-    def is_blocked(self, src_ip: int, dst_ip: int, app: AppType, sni: str) -> bool:
+    def evaluate(self, src_ip: int, dst_ip: int, app: AppType, sni: str) -> tuple[bool, str]:
         if src_ip in self.blocked_ips or dst_ip in self.blocked_ips:
-            return True
+            return True, "Blocked by IP rule"
         if app in self.blocked_apps:
-            return True
+            return True, f"Blocked by App rule: {app_type_to_string(app)}"
         host = sni.lower()
-        return any(domain in host for domain in self.blocked_domains)
+        for domain in self.blocked_domains:
+            if domain in host:
+                return True, f"Blocked by Domain rule: {domain}"
+        return False, ""
 
 
 class DPIEngine:
@@ -108,7 +104,7 @@ class DPIEngine:
     def block_domain(self, domain: str) -> None:
         self.rules.block_domain(domain)
 
-    def process_file(self, input_file: str, output_file: str) -> bool:
+    def process_file(self, input_file: str, output_file: str, json_output_file: str = "report.json") -> bool:
         reader = PcapReader()
         if not reader.open(input_file):
             return False
@@ -118,18 +114,19 @@ class DPIEngine:
             return False
 
         gh = reader.global_header
-        if gh.magic_number in (0xA1B2C3D4, 0xA1B23C4D):
+        if gh.magic_number in (0xA1B2C3D4, 0xA1B2C34D):
             endian = "<"
-        elif gh.magic_number in (0xD4C3B2A1, 0x4D3CB2A1):
+        elif gh.magic_number in (0xD4C3B2A1, 0x4DC3B2A1):
             endian = ">"
         else:
             print(f"Error: Unrecognized pcap magic number: 0x{gh.magic_number:08x}")
             reader.close()
             return False
 
-        flows: dict[FiveTuple, _FlowState] = {}
+        flows: dict[FiveTuple, Flow] = {}
         app_stats: dict[AppType, int] = defaultdict(int)
         total_packets = 0
+        total_bytes = 0
         forwarded = 0
         dropped = 0
 
@@ -144,6 +141,7 @@ class DPIEngine:
                     if raw is None:
                         break
                     total_packets += 1
+                    total_bytes += len(raw.data)
 
                     parsed = parse(raw)
                     if parsed is None:
@@ -165,36 +163,54 @@ class DPIEngine:
 
                     flow = flows.get(tuple_value)
                     if flow is None:
-                        flow = _FlowState(tuple_value)
+                        flow = Flow(tuple_value)
                         flows[tuple_value] = flow
+
+                    flow.packet_count += 1
+                    flow.byte_count += len(raw.data)
+                    if flow.packet_count == 1:
+                        flow.first_seen_timestamp = raw.header.ts_sec
+                    flow.last_seen_timestamp = raw.header.ts_sec
 
                     if (flow.app_type in (AppType.UNKNOWN, AppType.HTTPS)) and not flow.sni and parsed.has_tcp and parsed.dest_port == 443:
                         sni = extract_sni(parsed.payload_data)
                         if sni:
                             flow.sni = sni
                             flow.app_type = sni_to_app_type(sni)
+                            flow.detection_method = DetectionMethod.TLS_SNI
 
                     if (flow.app_type in (AppType.UNKNOWN, AppType.HTTP)) and not flow.sni and parsed.has_tcp and parsed.dest_port == 80:
                         host = extract_http_host(parsed.payload_data)
                         if host:
                             flow.sni = host
                             flow.app_type = sni_to_app_type(host)
+                            flow.detection_method = DetectionMethod.HTTP_HOST
 
                     if flow.app_type == AppType.UNKNOWN and (parsed.dest_port == 53 or parsed.src_port == 53):
                         flow.app_type = AppType.DNS
+                        flow.detection_method = DetectionMethod.DNS
 
                     if flow.app_type == AppType.UNKNOWN:
                         if parsed.dest_port == 443:
                             flow.app_type = AppType.HTTPS
+                            flow.detection_method = DetectionMethod.PORT_BASED
                         elif parsed.dest_port == 80:
                             flow.app_type = AppType.HTTP
+                            flow.detection_method = DetectionMethod.PORT_BASED
+                        elif flow.detection_method == DetectionMethod.UNKNOWN:
+                            flow.detection_method = DetectionMethod.UNKNOWN
 
                     if not flow.blocked:
-                        flow.blocked = self.rules.is_blocked(tuple_value.src_ip, tuple_value.dst_ip, flow.app_type, flow.sni)
+                        blocked, reason = self.rules.evaluate(tuple_value.src_ip, tuple_value.dst_ip, flow.app_type, flow.sni)
+                        flow.blocked = blocked
+                        if blocked:
+                            flow.block_reason = reason
                         if flow.blocked:
                             msg = f"[BLOCKED] {parsed.src_ip} -> {parsed.dest_ip} ({app_type_to_string(flow.app_type)}"
                             if flow.sni:
                                 msg += f": {flow.sni}"
+                            if flow.block_reason:
+                                msg += f" | {flow.block_reason}"
                             msg += ")"
                             print(msg)
 
@@ -221,6 +237,7 @@ class DPIEngine:
         print("║                      PROCESSING REPORT                       ║")
         print("╠══════════════════════════════════════════════════════════════╣")
         print(f"║ Total Packets:      {total_packets:10d}                             ║")
+        print(f"║ Total Bytes:        {total_bytes:10d}                             ║")
         print(f"║ Forwarded:          {forwarded:10d}                             ║")
         print(f"║ Dropped:            {dropped:10d}                             ║")
         print(f"║ Non-IP/Unparsed:    {self.filtered_nonip_or_unparsed_count:10d}                             ║")
@@ -243,6 +260,20 @@ class DPIEngine:
                 unique_snis[flow.sni] = flow.app_type
         for sni, app in unique_snis.items():
             print(f"  - {sni} -> {app_type_to_string(app)}")
+
+        if json_output_file:
+            write_json_report(
+                json_output_file,
+                flows,
+                {
+                    "total_packets": total_packets,
+                    "total_bytes": total_bytes,
+                    "forwarded": forwarded,
+                    "dropped": dropped,
+                    "non_ip_or_unparsed": self.filtered_nonip_or_unparsed_count,
+                },
+            )
+            print(f"JSON report written to: {json_output_file}")
 
         print(f"\nOutput written to: {output_file}")
         return True
