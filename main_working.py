@@ -115,6 +115,9 @@ def main() -> int:
     flows: dict[FiveTuple, Flow] = {}
     app_stats: dict[AppType, int] = defaultdict(int)
     total_packets = 0
+    total_bytes = 0
+    tcp_packets = 0
+    udp_packets = 0
     forwarded = 0
     dropped = 0
 
@@ -125,11 +128,17 @@ def main() -> int:
         if raw is None:
             break
         total_packets += 1
+        total_bytes += len(raw.data)
         parsed = parse(raw)
         if parsed is None:
             continue
         if not parsed.has_ip or (not parsed.has_tcp and not parsed.has_udp):
             continue
+
+        if parsed.has_tcp:
+            tcp_packets += 1
+        elif parsed.has_udp:
+            udp_packets += 1
 
         tuple_value = FiveTuple(
             src_ip=ip_str_to_uint32(parsed.src_ip),
@@ -193,6 +202,10 @@ def main() -> int:
     print("║                      PROCESSING REPORT                       ║")
     print("╠══════════════════════════════════════════════════════════════╣")
     print(f"║ Total Packets:      {total_packets:10d}                             ║")
+    print(f"║ Total Bytes:        {total_bytes:10d}                             ║")
+    print(f"║ TCP Packets:        {tcp_packets:10d}                             ║")
+    print(f"║ UDP Packets:        {udp_packets:10d}                             ║")
+    print("╠══════════════════════════════════════════════════════════════╣")
     print(f"║ Forwarded:          {forwarded:10d}                             ║")
     print(f"║ Dropped:            {dropped:10d}                             ║")
     print(f"║ Active Flows:       {len(flows):10d}                             ║")
