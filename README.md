@@ -32,6 +32,7 @@ The goal of this repository is educational and practical: it shows how packet pa
 - Applies blocking rules by source IP, application, or domain substring
 - Supports allowlist domains (higher priority than block rules)
 - Supports regex-based domain blocking rules
+- Correlates DNS responses to infer HTTPS domains when SNI is missing
 - Stores explainable flow decisions (detection method and block reason)
 - Tracks flow analytics (packet count, byte count, first/last seen, duration, average packet size)
 - Flags suspicious flows using heuristic detection
@@ -445,9 +446,11 @@ The exact banner and counts depend on the script you run, but the output usually
 - Non-IP/Unparsed packet totals
 - Forwarded versus dropped packet totals
 - Suspicious flow totals
+- Compact suspicious-flow reason counts
 - Application breakdown
 - Detected domains or SNIs
 - JSON report location and generated flow intelligence
+- JSON summary counts for suspicious flows by reason
 - Output file location
 
 ### Rules File Format (Modular Engine)

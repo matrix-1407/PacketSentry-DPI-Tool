@@ -175,7 +175,115 @@ class DPIEngine:
         flow.is_suspicious = True
         flow.suspicious_reason = reason
 
-    def _detect_suspicious_flows(self, flows: dict[FiveTuple, Flow]) -> int:
+    def _parse_dns_name(self, payload: bytes, offset: int, max_depth: int = 8) -> tuple[str, int] | None:
+        labels: list[str] = []
+        cursor = offset
+        jumped = False
+        next_offset = offset
+        depth = 0
+
+        while cursor < len(payload):
+            length = payload[cursor]
+            if length == 0:
+                if not jumped:
+                    next_offset = cursor + 1
+                return ".".join(labels).lower(), next_offset
+
+            # DNS name compression pointer.
+            if (length & 0xC0) == 0xC0:
+                if cursor + 1 >= len(payload):
+                    return None
+                pointer = ((length & 0x3F) << 8) | payload[cursor + 1]
+                if pointer >= len(payload):
+                    return None
+                if not jumped:
+                    next_offset = cursor + 2
+                cursor = pointer
+                jumped = True
+                depth += 1
+                if depth > max_depth:
+                    return None
+                continue
+
+            cursor += 1
+            if cursor + length > len(payload):
+                return None
+            label_bytes = payload[cursor : cursor + length]
+            try:
+                labels.append(label_bytes.decode("ascii", errors="ignore"))
+            except UnicodeDecodeError:
+                labels.append("")
+            cursor += length
+            if not jumped:
+                next_offset = cursor
+
+        return None
+
+    def _extract_dns_a_records(self, payload: bytes) -> list[tuple[int, str]]:
+        if len(payload) < 12:
+            return []
+
+        flags = (payload[2] << 8) | payload[3]
+        qdcount = (payload[4] << 8) | payload[5]
+        ancount = (payload[6] << 8) | payload[7]
+
+        # Process only DNS responses.
+        if (flags & 0x8000) == 0:
+            return []
+
+        offset = 12
+        question_domain = ""
+
+        # Parse first question to recover requested domain.
+        if qdcount > 0:
+            parsed_name = self._parse_dns_name(payload, offset)
+            if parsed_name is None:
+                return []
+            question_domain, offset = parsed_name
+            if offset + 4 > len(payload):
+                return []
+            offset += 4  # qtype + qclass
+
+            # Skip extra questions if present.
+            for _ in range(1, qdcount):
+                parsed_extra = self._parse_dns_name(payload, offset)
+                if parsed_extra is None:
+                    return []
+                _, offset = parsed_extra
+                if offset + 4 > len(payload):
+                    return []
+                offset += 4
+
+        mappings: list[tuple[int, str]] = []
+        for _ in range(ancount):
+            parsed_answer_name = self._parse_dns_name(payload, offset)
+            if parsed_answer_name is None:
+                break
+            answer_name, offset = parsed_answer_name
+
+            if offset + 10 > len(payload):
+                break
+            rtype = (payload[offset] << 8) | payload[offset + 1]
+            rclass = (payload[offset + 2] << 8) | payload[offset + 3]
+            rdlength = (payload[offset + 8] << 8) | payload[offset + 9]
+            offset += 10
+
+            if offset + rdlength > len(payload):
+                break
+
+            rdata = payload[offset : offset + rdlength]
+            offset += rdlength
+
+            # IPv4 A record.
+            if rtype == 1 and rclass == 1 and rdlength == 4:
+                ip_uint = int.from_bytes(rdata, "big")
+                domain = question_domain or answer_name
+                if domain:
+                    mappings.append((ip_uint, domain))
+
+        return mappings
+
+    def _detect_suspicious_flows(self, flows: dict[FiveTuple, Flow]) -> tuple[int, dict[str, int]]:
         src_conn_counts: dict[int, int] = defaultdict(int)
         src_short_conn_counts: dict[int, int] = defaultdict(int)
 
@@ -211,7 +319,16 @@ class DPIEngine:
             if flow.is_suspicious:
                 suspicious_count += 1
 
-        return suspicious_count
+        reason_counts: dict[str, int] = defaultdict(int)
+        for flow in flows.values():
+            if not flow.is_suspicious or not flow.suspicious_reason:
+                continue
+            for reason in (segment.strip() for segment in flow.suspicious_reason.split(";")):
+                if reason:
+                    reason_counts[reason] += 1
+
+        sorted_reason_counts = dict(sorted(reason_counts.items(), key=lambda item: item[1], reverse=True))
+        return suspicious_count, sorted_reason_counts
 
     def process_file(self, input_file: str, output_file: str, json_output_file: str = "report.json") -> bool:
         reader = PcapReader()
@@ -233,6 +350,7 @@ class DPIEngine:
             return False
 
         flows: dict[FiveTuple, Flow] = {}
+        dns_map: dict[int, str] = {}
         app_stats: dict[AppType, int] = defaultdict(int)
         total_packets = 0
         total_bytes = 0
@@ -262,6 +380,10 @@ class DPIEngine:
                         self.filtered_nonip_or_unparsed_count += 1
                         continue
 
+                    if parsed.has_udp and parsed.src_port == 53:
+                        for resolved_ip, resolved_domain in self._extract_dns_a_records(parsed.payload_data):
+                            dns_map[resolved_ip] = resolved_domain
+
                     tuple_value = FiveTuple(
                         src_ip=ip_str_to_uint32(parsed.src_ip),
                         dst_ip=ip_str_to_uint32(parsed.dest_ip),
@@ -287,6 +409,13 @@ class DPIEngine:
                             flow.sni = sni
                             flow.app_type = sni_to_app_type(sni)
                             flow.detection_method = DetectionMethod.TLS_SNI
+
+                    if (flow.app_type in (AppType.UNKNOWN, AppType.HTTPS)) and not flow.sni and parsed.has_tcp and parsed.dest_port == 443:
+                        correlated_domain = dns_map.get(tuple_value.dst_ip)
+                        if correlated_domain:
+                            flow.sni = correlated_domain
+                            flow.app_type = sni_to_app_type(correlated_domain)
+                            flow.detection_method = DetectionMethod.DNS_CORRELATED
 
                     if (flow.app_type in (AppType.UNKNOWN, AppType.HTTP)) and not flow.sni and parsed.has_tcp and parsed.dest_port == 80:
                         host = extract_http_host(parsed.payload_data)
@@ -350,8 +479,11 @@ class DPIEngine:
         print(f"║ Non-IP/Unparsed:    {self.filtered_nonip_or_unparsed_count:10d}                             ║")
         print(f"║ Active Flows:       {len(flows):10d}                             ║")
 
-        suspicious_count = self._detect_suspicious_flows(flows)
+        suspicious_count, suspicious_reason_counts = self._detect_suspicious_flows(flows)
         print(f"║ Suspicious Flows:   {suspicious_count:10d}                             ║")
+        for reason, count in list(suspicious_reason_counts.items())[:3]:
+            truncated_reason = reason[:32]
+            print(f"║   {truncated_reason:<32}{count:>10d}                             ║")
         print("╠══════════════════════════════════════════════════════════════╣")
         print("║                    APPLICATION BREAKDOWN                     ║")
         print("╠══════════════════════════════════════════════════════════════╣")
@@ -382,6 +514,8 @@ class DPIEngine:
                         "forwarded": forwarded,
                         "dropped": dropped,
                         "non_ip_or_unparsed": self.filtered_nonip_or_unparsed_count,
+                        "suspicious_flows": suspicious_count,
+                        "suspicious_by_reason": suspicious_reason_counts,
                     },
                 )
                 print(f"JSON report written to: {json_output_file}")

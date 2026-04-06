@@ -45,6 +45,11 @@ def generate_json_report(flows: dict, stats: dict) -> str:
             "dropped": int(stats.get("dropped", 0)),
             "total_flows": len(flow_rows),
             "non_ip_or_unparsed": int(stats.get("non_ip_or_unparsed", 0)),
+            "suspicious_flows": int(stats.get("suspicious_flows", 0)),
+            "suspicious_by_reason": {
+                str(reason): int(count)
+                for reason, count in dict(stats.get("suspicious_by_reason", {})).items()
+            },
         },
         "flows": flow_rows,
     }
