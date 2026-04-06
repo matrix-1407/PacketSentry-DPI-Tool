@@ -60,7 +60,7 @@ Options:
   --block-ip <ip>        Block traffic from source IP
   --block-app <app>      Block application (YouTube, Facebook, etc.)
   --block-domain <dom>   Block domain (substring match)
-    --json-output <file>   Write JSON report (default: report.json)
+  --json-output <file>   Write JSON report (default: report.json)
 """
     )
 
@@ -115,6 +115,7 @@ def main() -> int:
     total_bytes = 0
     tcp_packets = 0
     udp_packets = 0
+    non_ip_or_unparsed = 0
     forwarded = 0
     dropped = 0
 
@@ -128,8 +129,10 @@ def main() -> int:
         total_bytes += len(raw.data)
         parsed = parse(raw)
         if parsed is None:
+            non_ip_or_unparsed += 1
             continue
         if not parsed.has_ip or (not parsed.has_tcp and not parsed.has_udp):
+            non_ip_or_unparsed += 1
             continue
 
         if parsed.has_tcp:
@@ -247,7 +250,7 @@ def main() -> int:
                 "total_bytes": total_bytes,
                 "forwarded": forwarded,
                 "dropped": dropped,
-                "non_ip_or_unparsed": 0,
+                "non_ip_or_unparsed": non_ip_or_unparsed,
             },
         )
         print(f"JSON report written to: {args.json_output}")
@@ -258,3 +261,4 @@ def main() -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
+

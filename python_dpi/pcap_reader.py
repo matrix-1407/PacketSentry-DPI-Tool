@@ -58,9 +58,9 @@ class PcapReader:
             return False
 
         magic_number = int.from_bytes(magic, "little")
-        if magic_number in (0xA1B2C3D4, 0xA1B2C34D):
+        if magic_number in (0xA1B2C3D4, 0xA1B23C4D):
             self._endian = "<"
-        elif magic_number in (0xD4C3B2A1, 0x4DC3B2A1):
+        elif magic_number in (0xD4C3B2A1, 0x4D3CB2A1):
             self._endian = ">"
         else:
             print("Error: Unsupported PCAP magic number")

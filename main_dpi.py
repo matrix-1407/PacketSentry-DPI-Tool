@@ -16,7 +16,7 @@ Options:
   --block-app <app>
   --block-domain <dom>
   --rules <file>
-    --json-output <file>
+  --json-output <file>
   --lbs <n>
   --fps <n>
   --verbose
@@ -81,3 +81,4 @@ def main() -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
+

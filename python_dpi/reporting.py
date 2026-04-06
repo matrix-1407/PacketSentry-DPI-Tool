@@ -43,7 +43,7 @@ def generate_json_report(flows: dict, stats: dict) -> str:
             "total_bytes": int(stats.get("total_bytes", 0)),
             "forwarded": int(stats.get("forwarded", 0)),
             "dropped": int(stats.get("dropped", 0)),
-            "total_flows": len(flows),
+            "total_flows": len(flow_rows),
             "non_ip_or_unparsed": int(stats.get("non_ip_or_unparsed", 0)),
         },
         "flows": flow_rows,

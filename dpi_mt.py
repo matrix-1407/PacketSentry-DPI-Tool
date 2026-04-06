@@ -64,6 +64,7 @@ class Stats:
         self.dropped = 0
         self.tcp_packets = 0
         self.udp_packets = 0
+        self.non_ip_or_unparsed = 0
         self._lock = threading.Lock()
         self.app_counts: dict[AppType, int] = defaultdict(int)
         self.detected_snis: dict[str, AppType] = {}
@@ -266,8 +267,10 @@ class DPIEngine:
                 break
             parsed = parse(raw)
             if parsed is None:
+                self.stats.non_ip_or_unparsed += 1
                 continue
             if not parsed.has_ip or (not parsed.has_tcp and not parsed.has_udp):
+                self.stats.non_ip_or_unparsed += 1
                 continue
 
             tuple_value = FiveTuple(
@@ -327,7 +330,7 @@ class DPIEngine:
                     "total_bytes": self.stats.total_bytes,
                     "forwarded": self.stats.forwarded,
                     "dropped": self.stats.dropped,
-                    "non_ip_or_unparsed": 0,
+                    "non_ip_or_unparsed": self.stats.non_ip_or_unparsed,
                 },
             )
             print(f"JSON report written to: {json_output_file}")
@@ -381,7 +384,7 @@ Options:
   --block-ip <ip>        Block source IP
   --block-app <app>      Block application (YouTube, Facebook, etc.)
   --block-domain <dom>   Block domain (substring match)
-    --json-output <file>   Write JSON report (default: report.json)
+  --json-output <file>   Write JSON report (default: report.json)
   --lbs <n>              Number of load balancer threads (default: 2)
   --fps <n>              FP threads per LB (default: 2)
 """
@@ -426,3 +429,4 @@ def main() -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
+

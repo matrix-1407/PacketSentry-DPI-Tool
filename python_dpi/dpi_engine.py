@@ -3,6 +3,7 @@ from __future__ import annotations
 from collections import defaultdict
 from dataclasses import dataclass
 import struct
+import sys
 
 from .packet_parser import parse
 from .pcap_reader import PcapReader
@@ -48,9 +49,14 @@ class _Rules:
             return True, "Blocked by IP rule"
         if app in self.blocked_apps:
             return True, f"Blocked by App rule: {app_type_to_string(app)}"
-        host = sni.lower()
+        host = sni.strip().lower().rstrip(".")
+        if host.count(":") == 1 and not host.startswith("["):
+            host = host.split(":", 1)[0]
         for domain in self.blocked_domains:
-            if domain in host:
+            normalized_domain = domain.strip().lower().rstrip(".")
+            if not normalized_domain:
+                continue
+            if host == normalized_domain or host.endswith("." + normalized_domain):
                 return True, f"Blocked by Domain rule: {domain}"
         return False, ""
 
@@ -114,9 +120,9 @@ class DPIEngine:
             return False
 
         gh = reader.global_header
-        if gh.magic_number in (0xA1B2C3D4, 0xA1B2C34D):
+        if gh.magic_number in (0xA1B2C3D4, 0xA1B23C4D):
             endian = "<"
-        elif gh.magic_number in (0xD4C3B2A1, 0x4DC3B2A1):
+        elif gh.magic_number in (0xD4C3B2A1, 0x4D3CB2A1):
             endian = ">"
         else:
             print(f"Error: Unrecognized pcap magic number: 0x{gh.magic_number:08x}")
@@ -197,8 +203,6 @@ class DPIEngine:
                         elif parsed.dest_port == 80:
                             flow.app_type = AppType.HTTP
                             flow.detection_method = DetectionMethod.PORT_BASED
-                        elif flow.detection_method == DetectionMethod.UNKNOWN:
-                            flow.detection_method = DetectionMethod.UNKNOWN
 
                     if not flow.blocked:
                         blocked, reason = self.rules.evaluate(tuple_value.src_ip, tuple_value.dst_ip, flow.app_type, flow.sni)
@@ -262,18 +266,21 @@ class DPIEngine:
             print(f"  - {sni} -> {app_type_to_string(app)}")
 
         if json_output_file:
-            write_json_report(
-                json_output_file,
-                flows,
-                {
-                    "total_packets": total_packets,
-                    "total_bytes": total_bytes,
-                    "forwarded": forwarded,
-                    "dropped": dropped,
-                    "non_ip_or_unparsed": self.filtered_nonip_or_unparsed_count,
-                },
-            )
-            print(f"JSON report written to: {json_output_file}")
+            try:
+                write_json_report(
+                    json_output_file,
+                    flows,
+                    {
+                        "total_packets": total_packets,
+                        "total_bytes": total_bytes,
+                        "forwarded": forwarded,
+                        "dropped": dropped,
+                        "non_ip_or_unparsed": self.filtered_nonip_or_unparsed_count,
+                    },
+                )
+                print(f"JSON report written to: {json_output_file}")
+            except Exception as exc:
+                print(f"Error writing JSON report '{json_output_file}': {exc}", file=sys.stderr)
 
         print(f"\nOutput written to: {output_file}")
         return True

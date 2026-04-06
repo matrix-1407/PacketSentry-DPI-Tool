@@ -30,6 +30,9 @@ The goal of this repository is educational and practical: it shows how packet pa
 - Extracts SNI from TLS and Host headers from HTTP when available
 - Classifies traffic into application types such as YouTube, Facebook, Google, and DNS
 - Applies blocking rules by source IP, application, or domain substring
+- Stores explainable flow decisions (detection method and block reason)
+- Tracks flow analytics (packet count, byte count, first/last seen, duration, average packet size)
+- Exports JSON flow intelligence reports
 - Writes allowed packets to a new PCAP file
 
 ## Repository Layout
@@ -45,18 +48,15 @@ PacketSentry/
 ├── test_dpi.pcap
 ├── output.pcap
 ├── README.md
-├── WINDOWS_SETUP.md
 └── python_dpi/
-        ├── pcap_reader.py
-        ├── packet_parser.py
-        ├── sni_extractor.py
-        ├── types.py
-        ├── rule_manager.py
-        ├── connection_tracker.py
-        ├── load_balancer.py
-        ├── fast_path.py
-        ├── thread_safe_queue.py
-        └── dpi_engine.py
+    ├── pcap_reader.py
+    ├── packet_parser.py
+    ├── sni_extractor.py
+    ├── thread_safe_queue.py
+    ├── types.py
+    ├── reporting.py
+    ├── dpi_engine.py
+    └── __init__.py
 ```
 
 ## Architecture at a Glance
@@ -315,6 +315,7 @@ Supported options:
 - `--block-ip <ip>`
 - `--block-app <app>`
 - `--block-domain <domain>`
+- `--json-output <file>`
 
 ### `main_dpi.py`
 
@@ -326,6 +327,7 @@ Supported options:
 - `--block-app <app>`
 - `--block-domain <domain>`
 - `--rules <file>`
+- `--json-output <file>`
 - `--lbs <n>`
 - `--fps <n>`
 - `--verbose`
@@ -339,6 +341,7 @@ Supported options:
 - `--block-ip <ip>`
 - `--block-app <app>`
 - `--block-domain <domain>`
+- `--json-output <file>`
 - `--lbs <n>`
 - `--fps <n>`
 
@@ -363,6 +366,8 @@ Run the primary single-threaded workflow:
 
 ```bash
 python main_working.py test_dpi.pcap output.pcap
+
+# writes report.json by default
 ```
 
 ### Blocking Examples
@@ -385,6 +390,9 @@ Run the modular engine with rules and thread settings:
 
 ```bash
 python main_dpi.py test_dpi.pcap output.pcap --block-app YouTube --rules rules.txt --lbs 2 --fps 2 --verbose
+
+# explicit JSON report target
+python main_dpi.py test_dpi.pcap output.pcap --json-output report.json
 ```
 
 ### Viewer and Inspection Examples
@@ -415,7 +423,7 @@ Use one-line commands in PowerShell. Do not use Unix-style line continuation.
 
 ```powershell
 python .\main_working.py test_dpi.pcap output.pcap --block-ip 192.168.1.50 --block-app YouTube --block-domain facebook
-python .\dpi_mt.py test_dpi.pcap output.pcap --lbs 2 --fps 2
+python .\dpi_mt.py test_dpi.pcap output.pcap --lbs 2 --fps 2 --json-output report.json
 python .\generate_test_pcap.py
 ```
 
@@ -426,9 +434,11 @@ The exact banner and counts depend on the script you run, but the output usually
 - The selected engine name and configuration
 - Rules that were loaded or applied
 - Packet counts and byte counts
+- Non-IP/Unparsed packet totals
 - Forwarded versus dropped packet totals
 - Application breakdown
 - Detected domains or SNIs
+- JSON report location and generated flow intelligence
 - Output file location
 
 Example output from the multi-threaded runner:
