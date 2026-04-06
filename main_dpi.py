@@ -15,6 +15,8 @@ Options:
   --block-ip <ip>
   --block-app <app>
   --block-domain <dom>
+    --allow-domain <dom>
+    --block-regex <pattern>
   --rules <file>
   --json-output <file>
   --lbs <n>
@@ -36,6 +38,8 @@ def main() -> int:
     parser.add_argument("--block-ip", action="append", default=[])
     parser.add_argument("--block-app", action="append", default=[])
     parser.add_argument("--block-domain", action="append", default=[])
+    parser.add_argument("--allow-domain", action="append", default=[])
+    parser.add_argument("--block-regex", action="append", default=[])
     parser.add_argument("--rules", default="")
     parser.add_argument("--json-output", default="report.json")
     parser.add_argument("--lbs", type=int, default=2)
@@ -69,6 +73,10 @@ def main() -> int:
         engine.block_app(app)
     for domain in args.block_domain:
         engine.block_domain(domain)
+    for domain in args.allow_domain:
+        engine.allow_domain(domain)
+    for pattern in args.block_regex:
+        engine.block_regex(pattern)
 
     if not engine.process_file(args.input_file, args.output_file, json_output_file=args.json_output):
         print("Failed to process file")

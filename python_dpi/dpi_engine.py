@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from collections import defaultdict
 from dataclasses import dataclass
+import re
 import struct
 import sys
 
@@ -18,13 +19,28 @@ class EngineConfig:
     fps_per_lb: int = 2
     rules_file: str = ""
     verbose: bool = False
+    suspicious_packet_threshold: int = 100
+    suspicious_unknown_bytes_threshold: int = 1500
+    suspicious_src_connection_threshold: int = 12
+    suspicious_short_connection_duration_threshold: int = 1
+    suspicious_short_connection_packets_threshold: int = 2
+    suspicious_short_connection_repeat_threshold: int = 5
 
 
 class _Rules:
     def __init__(self) -> None:
         self.blocked_ips: set[int] = set()
         self.blocked_apps: set[AppType] = set()
+        self.allow_domains: list[str] = []
         self.blocked_domains: list[str] = []
+        self.blocked_regex: list[tuple[str, re.Pattern[str]]] = []
+
+    @staticmethod
+    def _normalize_host(value: str) -> str:
+        host = value.strip().lower().rstrip(".")
+        if host.count(":") == 1 and not host.startswith("["):
+            host = host.split(":", 1)[0]
+        return host
 
     def block_ip(self, ip: str) -> None:
         self.blocked_ips.add(ip_str_to_uint32(ip))
@@ -44,20 +60,47 @@ class _Rules:
         self.blocked_domains.append(domain.lower())
         print(f"[Rules] Blocked domain: {domain}")
 
+    def allow_domain(self, domain: str) -> None:
+        self.allow_domains.append(domain.lower())
+        print(f"[Rules] Allowed domain: {domain}")
+
+    def block_regex(self, pattern: str) -> None:
+        compiled = re.compile(pattern, re.IGNORECASE)
+        self.blocked_regex.append((pattern, compiled))
+        print(f"[Rules] Blocked regex: {pattern}")
+
     def evaluate(self, src_ip: int, dst_ip: int, app: AppType, sni: str) -> tuple[bool, str]:
-        if src_ip in self.blocked_ips or dst_ip in self.blocked_ips:
-            return True, "Blocked by IP rule"
-        if app in self.blocked_apps:
-            return True, f"Blocked by App rule: {app_type_to_string(app)}"
-        host = sni.strip().lower().rstrip(".")
-        if host.count(":") == 1 and not host.startswith("["):
-            host = host.split(":", 1)[0]
-        for domain in self.blocked_domains:
-            normalized_domain = domain.strip().lower().rstrip(".")
+        host = self._normalize_host(sni)
+
+        # 1) Allowlist has highest priority.
+        for domain in self.allow_domains:
+            normalized_domain = self._normalize_host(domain)
             if not normalized_domain:
                 continue
             if host == normalized_domain or host.endswith("." + normalized_domain):
+                return False, ""
+
+        # 2) Block by IP.
+        if src_ip in self.blocked_ips or dst_ip in self.blocked_ips:
+            return True, "Blocked by IP rule"
+
+        # 3) Block by app.
+        if app in self.blocked_apps:
+            return True, f"Blocked by App rule: {app_type_to_string(app)}"
+
+        # 4) Block by domain substring.
+        for domain in self.blocked_domains:
+            normalized_domain = self._normalize_host(domain)
+            if not normalized_domain:
+                continue
+            if normalized_domain in host:
                 return True, f"Blocked by Domain rule: {domain}"
+
+        # 5) Block by regex pattern.
+        for pattern_text, pattern in self.blocked_regex:
+            if pattern.search(host):
+                return True, f"Blocked by Regex rule: {pattern_text}"
+
         return False, ""
 
 
@@ -94,6 +137,10 @@ class DPIEngine:
                             self.block_app(value)
                         elif rule in {"block-domain", "domain"}:
                             self.block_domain(value)
+                        elif rule in {"allow-domain", "allow", "allowlist-domain"}:
+                            self.allow_domain(value)
+                        elif rule in {"block-regex", "regex"}:
+                            self.block_regex(value)
                     except (ValueError, OSError) as exc:
                         print(f"[Rules] Skipping invalid rule on line {line_number}: {stripped} ({exc})")
         except OSError:
@@ -109,6 +156,58 @@ class DPIEngine:
 
     def block_domain(self, domain: str) -> None:
         self.rules.block_domain(domain)
+
+    def allow_domain(self, domain: str) -> None:
+        self.rules.allow_domain(domain)
+
+    def block_regex(self, pattern: str) -> None:
+        self.rules.block_regex(pattern)
+
+    def _mark_flow_suspicious(self, flow: Flow, reason: str) -> None:
+        if flow.is_suspicious:
+            if reason and reason not in flow.suspicious_reason:
+                flow.suspicious_reason = f"{flow.suspicious_reason}; {reason}" if flow.suspicious_reason else reason
+            return
+        flow.is_suspicious = True
+        flow.suspicious_reason = reason
+
+    def _detect_suspicious_flows(self, flows: dict[FiveTuple, Flow]) -> int:
+        src_conn_counts: dict[int, int] = defaultdict(int)
+        src_short_conn_counts: dict[int, int] = defaultdict(int)
+
+        for flow in flows.values():
+            src_conn_counts[flow.tuple.src_ip] += 1
+            if (
+                flow.duration_seconds <= self.config.suspicious_short_connection_duration_threshold
+                and flow.packet_count <= self.config.suspicious_short_connection_packets_threshold
+            ):
+                src_short_conn_counts[flow.tuple.src_ip] += 1
+
+        suspicious_count = 0
+        for flow in flows.values():
+            if flow.packet_count > self.config.suspicious_packet_threshold:
+                self._mark_flow_suspicious(flow, "High packet volume")
+
+            if src_conn_counts[flow.tuple.src_ip] > self.config.suspicious_src_connection_threshold:
+                self._mark_flow_suspicious(flow, "Too many connections from same source IP")
+
+            if src_short_conn_counts[flow.tuple.src_ip] > self.config.suspicious_short_connection_repeat_threshold:
+                if (
+                    flow.duration_seconds <= self.config.suspicious_short_connection_duration_threshold
+                    and flow.packet_count <= self.config.suspicious_short_connection_packets_threshold
+                ):
+                    self._mark_flow_suspicious(flow, "Frequent short connections")
+
+            if (
+                flow.app_type == AppType.UNKNOWN
+                and flow.byte_count > self.config.suspicious_unknown_bytes_threshold
+            ):
+                self._mark_flow_suspicious(flow, "Unknown app with high traffic")
+
+            if flow.is_suspicious:
+                suspicious_count += 1
+
+        return suspicious_count
 
     def process_file(self, input_file: str, output_file: str, json_output_file: str = "report.json") -> bool:
         reader = PcapReader()
@@ -246,6 +345,9 @@ class DPIEngine:
         print(f"║ Dropped:            {dropped:10d}                             ║")
         print(f"║ Non-IP/Unparsed:    {self.filtered_nonip_or_unparsed_count:10d}                             ║")
         print(f"║ Active Flows:       {len(flows):10d}                             ║")
+
+        suspicious_count = self._detect_suspicious_flows(flows)
+        print(f"║ Suspicious Flows:   {suspicious_count:10d}                             ║")
         print("╠══════════════════════════════════════════════════════════════╣")
         print("║                    APPLICATION BREAKDOWN                     ║")
         print("╠══════════════════════════════════════════════════════════════╣")

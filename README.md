@@ -30,8 +30,11 @@ The goal of this repository is educational and practical: it shows how packet pa
 - Extracts SNI from TLS and Host headers from HTTP when available
 - Classifies traffic into application types such as YouTube, Facebook, Google, and DNS
 - Applies blocking rules by source IP, application, or domain substring
+- Supports allowlist domains (higher priority than block rules)
+- Supports regex-based domain blocking rules
 - Stores explainable flow decisions (detection method and block reason)
 - Tracks flow analytics (packet count, byte count, first/last seen, duration, average packet size)
+- Flags suspicious flows using heuristic detection
 - Exports JSON flow intelligence reports
 - Writes allowed packets to a new PCAP file
 
@@ -326,6 +329,8 @@ Supported options:
 - `--block-ip <ip>`
 - `--block-app <app>`
 - `--block-domain <domain>`
+- `--allow-domain <domain>`
+- `--block-regex <pattern>`
 - `--rules <file>`
 - `--json-output <file>`
 - `--lbs <n>`
@@ -376,6 +381,9 @@ Block traffic by IP, application, and domain substring:
 
 ```bash
 python main_working.py test_dpi.pcap output.pcap --block-ip 192.168.1.50 --block-app YouTube --block-domain facebook
+
+# allowlist and regex examples (modular engine)
+python main_dpi.py test_dpi.pcap output.pcap --block-domain youtube --allow-domain youtube.com --block-regex ".*tracking.*"
 ```
 
 ### Multi-Threaded Examples
@@ -436,10 +444,31 @@ The exact banner and counts depend on the script you run, but the output usually
 - Packet counts and byte counts
 - Non-IP/Unparsed packet totals
 - Forwarded versus dropped packet totals
+- Suspicious flow totals
 - Application breakdown
 - Detected domains or SNIs
 - JSON report location and generated flow intelligence
 - Output file location
+
+### Rules File Format (Modular Engine)
+
+The modular engine accepts `--rules <file>` entries in the format `<rule> <value>`.
+
+Supported rules:
+
+- `block-ip <ipv4>`
+- `block-app <AppName>`
+- `block-domain <substring>`
+- `allow-domain <domain>`
+- `block-regex <regex_pattern>`
+
+Evaluation order:
+
+1. `allow-domain` (allow immediately)
+2. `block-ip`
+3. `block-app`
+4. `block-domain` (substring)
+5. `block-regex`
 
 Example output from the multi-threaded runner:
 
