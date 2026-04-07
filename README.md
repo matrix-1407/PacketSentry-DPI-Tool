@@ -449,25 +449,6 @@ Extract SNI values from a capture:
 python main_simple.py test_dpi.pcap
 ```
 
-### Generate Test Data
-
-Create or refresh the sample capture used by the examples:
-
-```bash
-python generate_test_pcap.py
-
-# deterministic output path and seed
-python generate_test_pcap.py --output test_dpi_phase2.pcap --seed 1337
-
-# final demo capture (used with final_rules.txt)
-python generate_test_pcap.py --output final_test.pcap --seed 1337
-
-# demo run with rules, JSON, and HTML reports
-python main_dpi.py final_test.pcap output_final_mod.pcap --rules final_rules.txt --json-output final_report_mod.json --html-output final_report_mod.html --suspicious-profile strict
-```
-
-For repeatable regression input, use the seeded generator output with the modular engine and report flags.
-
 ## Windows PowerShell
 
 Use one-line commands in PowerShell. Do not use Unix-style line continuation.
