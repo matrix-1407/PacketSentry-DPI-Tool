@@ -336,6 +336,13 @@ Supported options:
 - `--json-output <file>`
 - `--lbs <n>`
 - `--fps <n>`
+- `--suspicious-profile <balanced|strict|relaxed>`
+- `--suspicious-packet-threshold <n>`
+- `--suspicious-unknown-bytes-threshold <n>`
+- `--suspicious-src-connection-threshold <n>`
+- `--suspicious-short-connection-duration-threshold <n>`
+- `--suspicious-short-connection-packets-threshold <n>`
+- `--suspicious-short-connection-repeat-threshold <n>`
 - `--verbose`
 
 ### `dpi_mt.py`
@@ -402,6 +409,9 @@ python main_dpi.py test_dpi.pcap output.pcap --block-app YouTube --rules rules.t
 
 # explicit JSON report target
 python main_dpi.py test_dpi.pcap output.pcap --json-output report.json
+
+# stricter suspicious-flow profile with one custom override
+python main_dpi.py test_dpi.pcap output.pcap --suspicious-profile strict --suspicious-src-connection-threshold 6
 ```
 
 ### Viewer and Inspection Examples
@@ -424,6 +434,9 @@ Create or refresh the sample capture used by the examples:
 
 ```bash
 python generate_test_pcap.py
+
+# deterministic output path and seed
+python generate_test_pcap.py --output test_dpi_phase2.pcap --seed 1337
 ```
 
 ## Windows PowerShell
@@ -452,6 +465,8 @@ The exact banner and counts depend on the script you run, but the output usually
 - JSON report location and generated flow intelligence
 - JSON summary counts for suspicious flows by reason
 - Output file location
+
+The modular engine uses `balanced` suspicious thresholds by default. You can switch to `strict` or `relaxed`, then override individual thresholds with explicit flags.
 
 ### Rules File Format (Modular Engine)
 
