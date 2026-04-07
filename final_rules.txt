@@ -1,0 +1,6 @@
+# Demo rules for final_test.pcap
+allow-domain youtube.com
+block-domain youtube
+block-regex .*tracking.*
+block-ip 192.168.1.50
+block-app TikTok

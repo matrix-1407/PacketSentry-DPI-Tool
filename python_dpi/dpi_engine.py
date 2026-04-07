@@ -8,6 +8,7 @@ import sys
 
 from .packet_parser import parse
 from .pcap_reader import PcapReader
+from .anomaly_detection import apply_ai_scoring
 from .reporting import write_html_report, write_json_report
 from .sni_extractor import extract_http_host, extract_sni
 from .types import AppType, DetectionMethod, FiveTuple, Flow, app_type_to_string, ip_str_to_uint32, sni_to_app_type
@@ -97,7 +98,7 @@ class _Rules:
             normalized_domain = self._normalize_host(domain)
             if not normalized_domain:
                 continue
-            if normalized_domain in host:
+            if host == normalized_domain or host.endswith("." + normalized_domain):
                 return True, f"Blocked by Domain rule: {domain}"
 
         # 5) Block by regex pattern.
@@ -486,10 +487,14 @@ class DPIEngine:
         print(f"║ Active Flows:       {len(flows):10d}                             ║")
 
         suspicious_count, suspicious_reason_counts = self._detect_suspicious_flows(flows)
+        ai_meta = apply_ai_scoring(flows)
         print(f"║ Suspicious Flows:   {suspicious_count:10d}                             ║")
         for reason, count in list(suspicious_reason_counts.items())[:3]:
             truncated_reason = reason[:32]
             print(f"║   {truncated_reason:<32}{count:>10d}                             ║")
+        print(f"║ AI Model Enabled:   {str(bool(ai_meta['ai_enabled'])):<10}                             ║")
+        risk_dist = ai_meta["risk_distribution"]
+        print(f"║ Risk (L/M/H):       {risk_dist['Low']:>3d}/{risk_dist['Medium']:<3d}/{risk_dist['High']:<3d}                             ║")
         print("╠══════════════════════════════════════════════════════════════╣")
         print("║                    APPLICATION BREAKDOWN                     ║")
         print("╠══════════════════════════════════════════════════════════════╣")
@@ -509,40 +514,28 @@ class DPIEngine:
         for sni, app in unique_snis.items():
             print(f"  - {sni} -> {app_type_to_string(app)}")
 
+        report_stats = {
+            "total_packets": total_packets,
+            "total_bytes": total_bytes,
+            "forwarded": forwarded,
+            "dropped": dropped,
+            "non_ip_or_unparsed": self.filtered_nonip_or_unparsed_count,
+            "suspicious_flows": suspicious_count,
+            "suspicious_by_reason": suspicious_reason_counts,
+            "risk_distribution": risk_dist,
+            "ai_model_enabled": bool(ai_meta["ai_enabled"]),
+        }
+
         if json_output_file:
             try:
-                write_json_report(
-                    json_output_file,
-                    flows,
-                    {
-                        "total_packets": total_packets,
-                        "total_bytes": total_bytes,
-                        "forwarded": forwarded,
-                        "dropped": dropped,
-                        "non_ip_or_unparsed": self.filtered_nonip_or_unparsed_count,
-                        "suspicious_flows": suspicious_count,
-                        "suspicious_by_reason": suspicious_reason_counts,
-                    },
-                )
+                write_json_report(json_output_file, flows, report_stats)
                 print(f"JSON report written to: {json_output_file}")
             except Exception as exc:
                 print(f"Error writing JSON report '{json_output_file}': {exc}", file=sys.stderr)
 
         if html_output_file:
             try:
-                write_html_report(
-                    html_output_file,
-                    flows,
-                    {
-                        "total_packets": total_packets,
-                        "total_bytes": total_bytes,
-                        "forwarded": forwarded,
-                        "dropped": dropped,
-                        "non_ip_or_unparsed": self.filtered_nonip_or_unparsed_count,
-                        "suspicious_flows": suspicious_count,
-                        "suspicious_by_reason": suspicious_reason_counts,
-                    },
-                )
+                write_html_report(html_output_file, flows, report_stats)
                 print(f"HTML report written to: {html_output_file}")
             except Exception as exc:
                 print(f"Error writing HTML report '{html_output_file}': {exc}", file=sys.stderr)

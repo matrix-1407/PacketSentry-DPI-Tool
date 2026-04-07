@@ -18,9 +18,10 @@ The goal of this repository is educational and practical: it shows how packet pa
 10. [Running PacketSentry](#running-packetsentry)
 11. [Windows PowerShell](#windows-powershell)
 12. [Output Overview](#output-overview)
-13. [Project Notes](#project-notes)
-14. [Troubleshooting](#troubleshooting)
-15. [Summary](#summary)
+13. [AI Features Overview](#ai-features-overview)
+14. [Project Notes](#project-notes)
+15. [Troubleshooting](#troubleshooting)
+16. [Summary](#summary)
 
 ## What PacketSentry Does
 
@@ -37,7 +38,11 @@ The goal of this repository is educational and practical: it shows how packet pa
 - Tracks flow analytics (packet count, byte count, first/last seen, duration, average packet size)
 - Flags suspicious flows using heuristic detection
 - Supports configurable suspicious-flow profiles and threshold overrides
+- Extracts per-flow AI features for anomaly analysis
+- Runs IsolationForest-based anomaly scoring (when scikit-learn is available)
+- Calculates per-flow risk scores and Low/Medium/High risk labels
 - Exports JSON and HTML flow intelligence reports
+- Adds terminal-style tabular sections inside JSON reports
 - Provides seeded fixture generation for repeatable validation
 - Writes allowed packets to a new PCAP file
 
@@ -374,7 +379,14 @@ This is a packet viewer and parser demo. It prints per-packet summaries, includi
 ### Requirements
 
 - Python 3.10 or newer
-- No external packages are required
+- Core engine: no external packages required
+- Optional AI scoring: `scikit-learn` (plus its dependencies)
+
+Install optional AI package:
+
+```bash
+pip install scikit-learn
+```
 
 ### Quick Start
 
@@ -420,6 +432,9 @@ python main_dpi.py test_dpi.pcap output.pcap --json-output report.json --html-ou
 python main_dpi.py test_dpi.pcap output.pcap --suspicious-profile strict --suspicious-src-connection-threshold 6
 ```
 
+When `scikit-learn` is installed, anomaly scoring is model-driven (`IsolationForest`).
+When it is not installed, PacketSentry falls back safely and still produces risk scores from existing signals.
+
 ### Viewer and Inspection Examples
 
 Inspect packets one by one:
@@ -443,6 +458,12 @@ python generate_test_pcap.py
 
 # deterministic output path and seed
 python generate_test_pcap.py --output test_dpi_phase2.pcap --seed 1337
+
+# final demo capture (used with final_rules.txt)
+python generate_test_pcap.py --output final_test.pcap --seed 1337
+
+# demo run with rules, JSON, and HTML reports
+python main_dpi.py final_test.pcap output_final_mod.pcap --rules final_rules.txt --json-output final_report_mod.json --html-output final_report_mod.html --suspicious-profile strict
 ```
 
 For repeatable regression input, use the seeded generator output with the modular engine and report flags.
@@ -468,11 +489,15 @@ The exact banner and counts depend on the script you run, but the output usually
 - Forwarded versus dropped packet totals
 - Suspicious flow totals
 - Compact suspicious-flow reason counts
+- AI model status (enabled/fallback)
+- Risk distribution (Low/Medium/High)
 - Application breakdown
 - Detected domains or SNIs
 - JSON report location and generated flow intelligence
 - HTML report location
 - JSON summary counts for suspicious flows by reason
+- JSON summary risk distribution and AI model status
+- JSON `tables` section with terminal-style rows (`summary_table`, `application_breakdown`, `suspicious_reasons`, `flow_overview`)
 - Output file location
 
 The modular engine uses `balanced` suspicious thresholds by default. You can switch to `strict` or `relaxed`, then override individual thresholds with explicit flags.
@@ -524,6 +549,18 @@ Facebook   3
     - www.facebook.com -> Facebook
 ```
 
+## AI Features Overview
+
+PacketSentry includes a lightweight AI layer designed to surface anomalous and risky flows without changing the core DPI logic.
+
+- **Feature extraction:** Per-flow features are derived after classification and rule checks (packet/byte counts, duration, average packet size, protocol, app type, and encryption flag).
+- **Anomaly detection:** An optional `IsolationForest` model (from scikit-learn) scores flows and produces a normalized `anomaly_score`.
+- **Risk scoring:** `risk_score` combines anomaly score with heuristic signals (unknown app, suspicious flags, and block status) and maps to `Low`, `Medium`, or `High` labels.
+- **Fallback behavior:** If scikit-learn is not available, the engine still runs and computes risk from heuristic signals while marking the model as disabled.
+
+AI runs after flow aggregation and heuristic suspicious detection, so reports include both explainable rules and model-based signals. To enable model-driven scoring, install scikit-learn and run the same commands as usual.
+
+
 ## Project Notes
 
 - `main_working.py` is the recommended starting point if you want to understand the full flow with the least amount of code.
@@ -537,6 +574,7 @@ Facebook   3
 - If PacketSentry does not classify a site, it may be encrypted in a way that does not expose SNI or Host information.
 - If no packets appear in the output, check whether your blocking rules are too broad.
 - If you are on Windows, prefer the PowerShell examples above and avoid Unix shell syntax.
+- If AI model status shows disabled, install `scikit-learn` to enable IsolationForest anomaly scoring.
 
 ## Summary
 
