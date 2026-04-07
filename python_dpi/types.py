@@ -10,6 +10,7 @@ class DetectionMethod:
     TLS_SNI = "TLS_SNI"
     HTTP_HOST = "HTTP_HOST"
     DNS = "DNS"
+    DNS_CORRELATED = "DNS_CORRELATED"
     PORT_BASED = "PORT_BASED"
 
 

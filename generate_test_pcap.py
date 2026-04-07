@@ -6,6 +6,7 @@ Includes TLS Client Hello with SNI, HTTP, DNS, etc.
 
 import struct
 import random
+import argparse
 
 class PCAPWriter:
     def __init__(self, filename):
@@ -137,8 +138,35 @@ def create_dns_query(domain):
     return txid + flags + counts + question
 
 
+def create_dns_response_a(domain, resolved_ip, txid=None):
+    if txid is None:
+        txid = random.randint(1, 65535)
+    txid_bytes = struct.pack('>H', txid)
+    flags = struct.pack('>H', 0x8180)  # standard query response, no error
+    counts = struct.pack('>HHHH', 1, 1, 0, 0)
+
+    question = b''
+    for label in domain.split('.'):
+        question += struct.pack('B', len(label)) + label.encode()
+    question += struct.pack('B', 0)
+    question += struct.pack('>HH', 1, 1)
+
+    # Name pointer to the first query name (offset 12).
+    answer_name = struct.pack('>H', 0xC00C)
+    answer_meta = struct.pack('>HHIH', 1, 1, 60, 4)  # A, IN, TTL=60, RDLENGTH=4
+    answer_rdata = bytes(int(octet) for octet in resolved_ip.split('.'))
+
+    return txid_bytes + flags + counts + question + answer_name + answer_meta + answer_rdata
+
+
 def main():
-    writer = PCAPWriter('test_dpi.pcap')
+    parser = argparse.ArgumentParser(description='Generate deterministic test PCAP traffic for PacketSentry.')
+    parser.add_argument('--output', default='test_dpi.pcap', help='Output PCAP file path')
+    parser.add_argument('--seed', type=int, default=1337, help='Random seed for deterministic packet generation')
+    args = parser.parse_args()
+
+    random.seed(args.seed)
+    writer = PCAPWriter(args.output)
     
     # Source: User's machine
     user_mac = '00:11:22:33:44:55'
@@ -165,6 +193,7 @@ def main():
         ('192.0.78.24', 'www.cloudflare.com', 443),
         ('13.107.42.14', 'www.microsoft.com', 443),
         ('17.253.144.10', 'www.apple.com', 443),
+        ('203.0.113.77', 'metrics.tracking.local', 443),
     ]
     
     # HTTP connections (unencrypted)
@@ -179,6 +208,11 @@ def main():
         'www.youtube.com',
         'www.facebook.com',
         'api.twitter.com',
+        'cdn.nosni.test',
+    ]
+
+    dns_responses = [
+        ('cdn.nosni.test', '203.0.113.10'),
     ]
     
     seq_base = 1000
@@ -241,6 +275,22 @@ def main():
         udp = create_udp_header(src_port, 53, len(dns_data))
         ip = create_ip_header(user_ip, dns_server, 17, len(udp) + len(dns_data))
         writer.write_packet(eth + ip + udp + dns_data)
+
+    # Generate DNS responses (used to validate DNS correlation when SNI is missing).
+    for domain, resolved_ip in dns_responses:
+        dst_port = random.randint(49152, 65535)
+        dns_data = create_dns_response_a(domain, resolved_ip)
+        eth = create_ethernet_header(gateway_mac, user_mac)
+        udp = create_udp_header(53, dst_port, len(dns_data))
+        ip = create_ip_header(dns_server, user_ip, 17, len(udp) + len(dns_data))
+        writer.write_packet(eth + ip + udp + dns_data)
+
+        # Follow-up HTTPS packet without SNI payload. Modular engine should correlate by dst IP.
+        tcp = create_tcp_header(random.randint(49152, 65535), 443, seq_base, 0, 0x02)
+        ip = create_ip_header(user_ip, resolved_ip, 6, len(tcp))
+        eth = create_ethernet_header(user_mac, gateway_mac)
+        writer.write_packet(eth + ip + tcp)
+        seq_base += 1000
     
     # Add some blocked IP traffic (from a specific source)
     blocked_source_ip = '192.168.1.50'
@@ -256,10 +306,11 @@ def main():
         seq_base += 1000
     
     writer.close()
-    print(f"Created test_dpi.pcap with test traffic")
+    print(f"Created {args.output} with test traffic (seed={args.seed})")
     print(f"  - {len(tls_connections)} TLS connections with SNI")
     print(f"  - {len(http_connections)} HTTP connections")
     print(f"  - {len(dns_queries)} DNS queries")
+    print(f"  - {len(dns_responses)} DNS responses for correlation")
     print(f"  - 5 packets from blocked IP {blocked_source_ip}")
 
 
