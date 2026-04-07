@@ -1,4 +1,4 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 from datetime import datetime, timezone
 from html import escape
@@ -6,6 +6,15 @@ import json
 
 from .anomaly_detection import classify_risk
 from .types import Flow, app_type_to_string
+
+
+def _safe_float(value: object, default: float = 0.0) -> float:
+    try:
+        if value is None:
+            return default
+        return float(value)
+    except (TypeError, ValueError):
+        return default
 
 
 def _build_report_payload(flows: dict, stats: dict) -> dict:
@@ -33,9 +42,9 @@ def _build_report_payload(flows: dict, stats: dict) -> dict:
                 "detection_method": flow.detection_method,
                 "is_suspicious": flow.is_suspicious,
                 "suspicious_reason": flow.suspicious_reason,
-                "anomaly_score": round(float(flow.anomaly_score), 6),
-                "risk_score": round(float(flow.risk_score), 6),
-                "risk_label": classify_risk(float(flow.risk_score)),
+                "anomaly_score": round(_safe_float(flow.anomaly_score), 6),
+                "risk_score": round(_safe_float(flow.risk_score), 6),
+                "risk_label": classify_risk(_safe_float(flow.risk_score)),
             }
         )
 
@@ -54,22 +63,22 @@ def _build_report_payload(flows: dict, stats: dict) -> dict:
         app_name = str(row["app_type"])
         app_counts[app_name] = app_counts.get(app_name, 0) + 1
 
-    total_packets = int(stats.get("total_packets", 0))
+    total_flows = len(flow_rows)
     app_table = [
         {
             "app": app_name,
             "count": count,
-            "pct": round((100.0 * count / total_packets) if total_packets else 0.0, 2),
+            "pct": round((100.0 * count / total_flows) if total_flows else 0.0, 2),
         }
         for app_name, count in sorted(app_counts.items(), key=lambda item: item[1], reverse=True)
     ]
 
     summary = {
-        "total_packets": total_packets,
+        "total_packets": int(stats.get("total_packets", 0)),
         "total_bytes": int(stats.get("total_bytes", 0)),
         "forwarded": int(stats.get("forwarded", 0)),
         "dropped": int(stats.get("dropped", 0)),
-        "total_flows": len(flow_rows),
+        "total_flows": total_flows,
         "non_ip_or_unparsed": int(stats.get("non_ip_or_unparsed", 0)),
         "suspicious_flows": int(stats.get("suspicious_flows", 0)),
         "suspicious_by_reason": suspicious_by_reason,

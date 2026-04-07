@@ -98,7 +98,7 @@ class _Rules:
             normalized_domain = self._normalize_host(domain)
             if not normalized_domain:
                 continue
-            if normalized_domain in host:
+            if host == normalized_domain or host.endswith("." + normalized_domain):
                 return True, f"Blocked by Domain rule: {domain}"
 
         # 5) Block by regex pattern.

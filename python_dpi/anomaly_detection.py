@@ -18,6 +18,7 @@ def _load_isolation_forest():
 
 
 def _probe_sklearn_available() -> bool:
+    # Probe sklearn in a subprocess so native import crashes or broken wheels do not take down the engine.
     try:
         completed = subprocess.run(
             [sys.executable, "-c", "import sklearn.ensemble; print('ok')"],
@@ -37,7 +38,7 @@ def _probe_sklearn_available() -> bool:
         return False
 
 
-SKLEARN_AVAILABLE = False
+SKLEARN_AVAILABLE = _probe_sklearn_available()
 
 
 def _clamp01(value: float) -> float:

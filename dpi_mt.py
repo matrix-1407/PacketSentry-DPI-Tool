@@ -324,7 +324,21 @@ class DPIEngine:
         for fp in self.fps:
             all_flows.update(fp.flows)
 
-        ai_meta = apply_ai_scoring(all_flows)
+        ai_meta = {"risk_distribution": {"Low": 0, "Medium": 0, "High": 0}, "ai_enabled": False}
+        try:
+            candidate_meta = apply_ai_scoring(all_flows)
+            if isinstance(candidate_meta, dict):
+                candidate_risk = candidate_meta.get("risk_distribution")
+                if isinstance(candidate_risk, dict):
+                    ai_meta["risk_distribution"] = {
+                        "Low": int(candidate_risk.get("Low", 0) or 0),
+                        "Medium": int(candidate_risk.get("Medium", 0) or 0),
+                        "High": int(candidate_risk.get("High", 0) or 0),
+                    }
+                ai_meta["ai_enabled"] = bool(candidate_meta.get("ai_enabled", False))
+        except Exception:
+            ai_meta = {"risk_distribution": {"Low": 0, "Medium": 0, "High": 0}, "ai_enabled": False}
+
         self.stats.risk_distribution = ai_meta["risk_distribution"]
         self.stats.ai_model_enabled = bool(ai_meta["ai_enabled"])
 
@@ -338,8 +352,6 @@ class DPIEngine:
                     "forwarded": self.stats.forwarded,
                     "dropped": self.stats.dropped,
                     "non_ip_or_unparsed": self.stats.non_ip_or_unparsed,
-                    "suspicious_flows": 0,
-                    "suspicious_by_reason": {},
                     "risk_distribution": self.stats.risk_distribution,
                     "ai_model_enabled": self.stats.ai_model_enabled,
                 },
