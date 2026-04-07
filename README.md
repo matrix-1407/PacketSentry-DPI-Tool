@@ -43,7 +43,6 @@ The goal of this repository is educational and practical: it shows how packet pa
 - Calculates per-flow risk scores and Low/Medium/High risk labels
 - Exports JSON and HTML flow intelligence reports
 - Adds terminal-style tabular sections inside JSON reports
-- Provides seeded fixture generation for repeatable validation
 - Writes allowed packets to a new PCAP file
 
 ## Repository Layout
@@ -55,7 +54,8 @@ PacketSentry/
 ├── dpi_mt.py            # Standalone multi-threaded DPI runner
 ├── main_simple.py       # Lightweight packet/SNI inspection example
 ├── main.py              # Packet viewer and parser demo
-├── generate_test_pcap.py
+├── final_rules.txt      # Demo rules file for modular engine
+├── final_test.pcap      # Demo PCAP used in final validation
 ├── test_dpi.pcap
 ├── output.pcap
 ├── README.md
@@ -65,6 +65,7 @@ PacketSentry/
     ├── sni_extractor.py
     ├── thread_safe_queue.py
     ├── types.py
+    ├── anomaly_detection.py
     ├── reporting.py
     ├── dpi_engine.py
     └── __init__.py
@@ -378,22 +379,27 @@ This is a packet viewer and parser demo. It prints per-packet summaries, includi
 
 ### Requirements
 
-- Python 3.10 or newer
+- Python 3.12 or 3.13 recommended on Windows
 - Core engine: no external packages required
 - Optional AI scoring: `scikit-learn` (plus its dependencies)
 
-Install optional AI package:
+Create and use a virtual environment, then install optional AI package:
 
-```bash
-pip install scikit-learn
+```powershell
+py -3.12 -m venv .venv
+.\.venv\Scripts\Activate.ps1
+.\.venv\Scripts\python.exe -m pip install --upgrade pip
+.\.venv\Scripts\python.exe -m pip install scikit-learn
 ```
+
+If multiple Python versions are installed, run the project using `.\.venv\Scripts\python.exe` so commands do not accidentally use `C:\Python314\python.exe`.
 
 ### Quick Start
 
 Run the primary single-threaded workflow:
 
-```bash
-python main_working.py test_dpi.pcap output.pcap
+```powershell
+.\.venv\Scripts\python.exe .\main_working.py test_dpi.pcap output.pcap
 
 # writes report.json by default
 ```
@@ -402,34 +408,37 @@ python main_working.py test_dpi.pcap output.pcap
 
 Block traffic by IP, application, and domain substring:
 
-```bash
-python main_working.py test_dpi.pcap output.pcap --block-ip 192.168.1.50 --block-app YouTube --block-domain facebook
+```powershell
+.\.venv\Scripts\python.exe .\main_working.py test_dpi.pcap output.pcap --block-ip 192.168.1.50 --block-app YouTube --block-domain facebook
 
 # allowlist and regex examples (modular engine)
-python main_dpi.py test_dpi.pcap output.pcap --block-domain youtube --allow-domain youtube.com --block-regex ".*tracking.*"
+.\.venv\Scripts\python.exe .\main_dpi.py test_dpi.pcap output.pcap --block-domain youtube --allow-domain youtube.com --block-regex ".*tracking.*"
 ```
 
 ### Multi-Threaded Examples
 
 Run the standalone multi-threaded engine:
 
-```bash
-python dpi_mt.py test_dpi.pcap output.pcap --lbs 2 --fps 2
+```powershell
+.\.venv\Scripts\python.exe .\dpi_mt.py test_dpi.pcap output.pcap --lbs 2 --fps 2
 ```
 
 Run the modular engine with rules and thread settings:
 
-```bash
-python main_dpi.py test_dpi.pcap output.pcap --block-app YouTube --rules rules.txt --lbs 2 --fps 2 --verbose
+```powershell
+.\.venv\Scripts\python.exe .\main_dpi.py test_dpi.pcap output.pcap --block-app YouTube --rules final_rules.txt --lbs 2 --fps 2 --verbose
 
 # explicit JSON report target
-python main_dpi.py test_dpi.pcap output.pcap --json-output report.json
+.\.venv\Scripts\python.exe .\main_dpi.py test_dpi.pcap output.pcap --json-output report.json
 
 # generate JSON and HTML reports together
-python main_dpi.py test_dpi.pcap output.pcap --json-output report.json --html-output report.html
+.\.venv\Scripts\python.exe .\main_dpi.py test_dpi.pcap output.pcap --json-output report.json --html-output report.html
 
 # stricter suspicious-flow profile with one custom override
-python main_dpi.py test_dpi.pcap output.pcap --suspicious-profile strict --suspicious-src-connection-threshold 6
+.\.venv\Scripts\python.exe .\main_dpi.py test_dpi.pcap output.pcap --suspicious-profile strict --suspicious-src-connection-threshold 6
+
+# run the final demo fixture with committed rules
+.\.venv\Scripts\python.exe .\main_dpi.py final_test.pcap output_final_mod.pcap --rules final_rules.txt --json-output final_report_mod.json --html-output final_report_mod.html --suspicious-profile strict
 ```
 
 When `scikit-learn` is installed, anomaly scoring is model-driven (`IsolationForest`).
@@ -439,24 +448,28 @@ When it is not installed, PacketSentry falls back safely and still produces risk
 
 Inspect packets one by one:
 
-```bash
-python main.py test_dpi.pcap 10
+```powershell
+.\.venv\Scripts\python.exe .\main.py test_dpi.pcap 10
 ```
 
 Extract SNI values from a capture:
 
-```bash
-python main_simple.py test_dpi.pcap
+```powershell
+.\.venv\Scripts\python.exe .\main_simple.py test_dpi.pcap
 ```
+
+### Test Data
+
+This repository already includes `test_dpi.pcap` and `final_test.pcap`, so no generation step is required to run the examples.
 
 ## Windows PowerShell
 
 Use one-line commands in PowerShell. Do not use Unix-style line continuation.
 
 ```powershell
-python .\main_working.py test_dpi.pcap output.pcap --block-ip 192.168.1.50 --block-app YouTube --block-domain facebook
-python .\dpi_mt.py test_dpi.pcap output.pcap --lbs 2 --fps 2 --json-output report.json
-python .\generate_test_pcap.py
+.\.venv\Scripts\python.exe .\main_working.py test_dpi.pcap output.pcap --block-ip 192.168.1.50 --block-app YouTube --block-domain facebook
+.\.venv\Scripts\python.exe .\dpi_mt.py test_dpi.pcap output.pcap --lbs 2 --fps 2 --json-output report.json
+.\.venv\Scripts\python.exe .\main_dpi.py final_test.pcap output_final_mod.pcap --rules final_rules.txt --json-output final_report_mod.json --html-output final_report_mod.html
 ```
 
 ## Output Overview
@@ -491,7 +504,7 @@ Supported rules:
 
 - `block-ip <ipv4>`
 - `block-app <AppName>`
-- `block-domain <substring>`
+- `block-domain <domain>`
 - `allow-domain <domain>`
 - `block-regex <regex_pattern>`
 
@@ -500,7 +513,7 @@ Evaluation order:
 1. `allow-domain` (allow immediately)
 2. `block-ip`
 3. `block-app`
-4. `block-domain` (substring)
+4. `block-domain` (exact domain or subdomain match)
 5. `block-regex`
 
 Example output from the multi-threaded runner:
@@ -556,6 +569,7 @@ AI runs after flow aggregation and heuristic suspicious detection, so reports in
 - If no packets appear in the output, check whether your blocking rules are too broad.
 - If you are on Windows, prefer the PowerShell examples above and avoid Unix shell syntax.
 - If AI model status shows disabled, install `scikit-learn` to enable IsolationForest anomaly scoring.
+- If commands appear to run with `C:\Python314\python.exe`, switch to `.\.venv\Scripts\python.exe` to use the project environment.
 
 ## Summary
 
