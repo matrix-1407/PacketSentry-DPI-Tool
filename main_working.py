@@ -7,6 +7,7 @@ import sys
 
 from python_dpi.packet_parser import parse
 from python_dpi.pcap_reader import PcapReader
+from python_dpi.anomaly_detection import apply_ai_scoring
 from python_dpi.reporting import write_json_report
 from python_dpi.sni_extractor import extract_http_host, extract_sni
 from python_dpi.types import AppType, DetectionMethod, FiveTuple, Flow, app_type_to_string, ip_str_to_uint32, sni_to_app_type
@@ -241,6 +242,12 @@ def main() -> int:
     for sni, app in unique_snis.items():
         print(f"  - {sni} -> {app_type_to_string(app)}")
 
+    ai_meta = apply_ai_scoring(flows)
+    risk_dist = ai_meta["risk_distribution"]
+    print("\n[AI Risk Summary]")
+    print(f"  - AI Model Enabled: {bool(ai_meta['ai_enabled'])}")
+    print(f"  - Risk (L/M/H): {risk_dist['Low']}/{risk_dist['Medium']}/{risk_dist['High']}")
+
     if args.json_output:
         write_json_report(
             args.json_output,
@@ -251,6 +258,10 @@ def main() -> int:
                 "forwarded": forwarded,
                 "dropped": dropped,
                 "non_ip_or_unparsed": non_ip_or_unparsed,
+                "suspicious_flows": 0,
+                "suspicious_by_reason": {},
+                "risk_distribution": risk_dist,
+                "ai_model_enabled": bool(ai_meta["ai_enabled"]),
             },
         )
         print(f"JSON report written to: {args.json_output}")

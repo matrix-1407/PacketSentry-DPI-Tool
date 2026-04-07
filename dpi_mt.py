@@ -9,6 +9,7 @@ import sys
 
 from python_dpi.packet_parser import parse
 from python_dpi.pcap_reader import PcapReader
+from python_dpi.anomaly_detection import apply_ai_scoring
 from python_dpi.reporting import write_json_report
 from python_dpi.sni_extractor import extract_http_host, extract_sni
 from python_dpi.thread_safe_queue import ThreadSafeQueue
@@ -68,6 +69,8 @@ class Stats:
         self._lock = threading.Lock()
         self.app_counts: dict[AppType, int] = defaultdict(int)
         self.detected_snis: dict[str, AppType] = {}
+        self.risk_distribution = {"Low": 0, "Medium": 0, "High": 0}
+        self.ai_model_enabled = False
 
     def record_app(self, app: AppType, sni: str) -> None:
         with self._lock:
@@ -321,6 +324,10 @@ class DPIEngine:
         for fp in self.fps:
             all_flows.update(fp.flows)
 
+        ai_meta = apply_ai_scoring(all_flows)
+        self.stats.risk_distribution = ai_meta["risk_distribution"]
+        self.stats.ai_model_enabled = bool(ai_meta["ai_enabled"])
+
         if json_output_file:
             write_json_report(
                 json_output_file,
@@ -331,6 +338,10 @@ class DPIEngine:
                     "forwarded": self.stats.forwarded,
                     "dropped": self.stats.dropped,
                     "non_ip_or_unparsed": self.stats.non_ip_or_unparsed,
+                    "suspicious_flows": 0,
+                    "suspicious_by_reason": {},
+                    "risk_distribution": self.stats.risk_distribution,
+                    "ai_model_enabled": self.stats.ai_model_enabled,
                 },
             )
             print(f"JSON report written to: {json_output_file}")
@@ -349,6 +360,10 @@ class DPIEngine:
         print("╠══════════════════════════════════════════════════════════════╣")
         print(f"║ Forwarded:          {self.stats.forwarded:12d}                           ║")
         print(f"║ Dropped:            {self.stats.dropped:12d}                           ║")
+        print(f"║ AI Model Enabled:   {str(self.stats.ai_model_enabled):<12}                           ║")
+        print(
+            f"║ Risk (L/M/H):       {self.stats.risk_distribution['Low']:>3d}/{self.stats.risk_distribution['Medium']:<3d}/{self.stats.risk_distribution['High']:<3d}                           ║"
+        )
         print("╠══════════════════════════════════════════════════════════════╣")
         print("║ THREAD STATISTICS                                             ║")
         for i, lb in enumerate(self.lbs):
