@@ -36,7 +36,9 @@ The goal of this repository is educational and practical: it shows how packet pa
 - Stores explainable flow decisions (detection method and block reason)
 - Tracks flow analytics (packet count, byte count, first/last seen, duration, average packet size)
 - Flags suspicious flows using heuristic detection
-- Exports JSON flow intelligence reports
+- Supports configurable suspicious-flow profiles and threshold overrides
+- Exports JSON and HTML flow intelligence reports
+- Provides seeded fixture generation for repeatable validation
 - Writes allowed packets to a new PCAP file
 
 ## Repository Layout
@@ -411,6 +413,9 @@ python main_dpi.py test_dpi.pcap output.pcap --block-app YouTube --rules rules.t
 # explicit JSON report target
 python main_dpi.py test_dpi.pcap output.pcap --json-output report.json
 
+# generate JSON and HTML reports together
+python main_dpi.py test_dpi.pcap output.pcap --json-output report.json --html-output report.html
+
 # stricter suspicious-flow profile with one custom override
 python main_dpi.py test_dpi.pcap output.pcap --suspicious-profile strict --suspicious-src-connection-threshold 6
 ```
@@ -439,6 +444,8 @@ python generate_test_pcap.py
 # deterministic output path and seed
 python generate_test_pcap.py --output test_dpi_phase2.pcap --seed 1337
 ```
+
+For repeatable regression input, use the seeded generator output with the modular engine and report flags.
 
 ## Windows PowerShell
 
