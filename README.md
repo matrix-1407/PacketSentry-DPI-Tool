@@ -334,6 +334,7 @@ Supported options:
 - `--block-regex <pattern>`
 - `--rules <file>`
 - `--json-output <file>`
+- `--html-output <file>`
 - `--lbs <n>`
 - `--fps <n>`
 - `--suspicious-profile <balanced|strict|relaxed>`
@@ -463,6 +464,7 @@ The exact banner and counts depend on the script you run, but the output usually
 - Application breakdown
 - Detected domains or SNIs
 - JSON report location and generated flow intelligence
+- HTML report location
 - JSON summary counts for suspicious flows by reason
 - Output file location
 

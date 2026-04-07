@@ -8,7 +8,7 @@ import sys
 
 from .packet_parser import parse
 from .pcap_reader import PcapReader
-from .reporting import write_json_report
+from .reporting import write_html_report, write_json_report
 from .sni_extractor import extract_http_host, extract_sni
 from .types import AppType, DetectionMethod, FiveTuple, Flow, app_type_to_string, ip_str_to_uint32, sni_to_app_type
 
@@ -330,7 +330,13 @@ class DPIEngine:
         sorted_reason_counts = dict(sorted(reason_counts.items(), key=lambda item: item[1], reverse=True))
         return suspicious_count, sorted_reason_counts
 
-    def process_file(self, input_file: str, output_file: str, json_output_file: str = "report.json") -> bool:
+    def process_file(
+        self,
+        input_file: str,
+        output_file: str,
+        json_output_file: str = "report.json",
+        html_output_file: str = "",
+    ) -> bool:
         reader = PcapReader()
         if not reader.open(input_file):
             return False
@@ -521,6 +527,25 @@ class DPIEngine:
                 print(f"JSON report written to: {json_output_file}")
             except Exception as exc:
                 print(f"Error writing JSON report '{json_output_file}': {exc}", file=sys.stderr)
+
+        if html_output_file:
+            try:
+                write_html_report(
+                    html_output_file,
+                    flows,
+                    {
+                        "total_packets": total_packets,
+                        "total_bytes": total_bytes,
+                        "forwarded": forwarded,
+                        "dropped": dropped,
+                        "non_ip_or_unparsed": self.filtered_nonip_or_unparsed_count,
+                        "suspicious_flows": suspicious_count,
+                        "suspicious_by_reason": suspicious_reason_counts,
+                    },
+                )
+                print(f"HTML report written to: {html_output_file}")
+            except Exception as exc:
+                print(f"Error writing HTML report '{html_output_file}': {exc}", file=sys.stderr)
 
         print(f"\nOutput written to: {output_file}")
         return True

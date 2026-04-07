@@ -55,32 +55,33 @@ def resolve_suspicious_thresholds(args: argparse.Namespace) -> dict[str, int]:
 
 
 def print_usage(prog: str) -> None:
-        print(
-                textwrap.dedent(
-                        f"""
-                        Usage: {prog} <input.pcap> <output.pcap> [options]
+    print(
+        textwrap.dedent(
+            f"""
+            Usage: {prog} <input.pcap> <output.pcap> [options]
 
-                        Options:
-                            --block-ip <ip>
-                            --block-app <app>
-                            --block-domain <dom>
-                            --allow-domain <dom>
-                            --block-regex <pattern>
-                            --rules <file>
-                            --json-output <file>
-                            --lbs <n>
-                            --fps <n>
-                            --suspicious-profile <balanced|strict|relaxed>
-                            --suspicious-packet-threshold <n>
-                            --suspicious-unknown-bytes-threshold <n>
-                            --suspicious-src-connection-threshold <n>
-                            --suspicious-short-connection-duration-threshold <n>
-                            --suspicious-short-connection-packets-threshold <n>
-                            --suspicious-short-connection-repeat-threshold <n>
-                            --verbose
-                        """
-                ).strip()
-        )
+            Options:
+              --block-ip <ip>
+              --block-app <app>
+              --block-domain <dom>
+              --allow-domain <dom>
+              --block-regex <pattern>
+              --rules <file>
+              --json-output <file>
+              --html-output <file>
+              --lbs <n>
+              --fps <n>
+              --suspicious-profile <balanced|strict|relaxed>
+              --suspicious-packet-threshold <n>
+              --suspicious-unknown-bytes-threshold <n>
+              --suspicious-src-connection-threshold <n>
+              --suspicious-short-connection-duration-threshold <n>
+              --suspicious-short-connection-packets-threshold <n>
+              --suspicious-short-connection-repeat-threshold <n>
+              --verbose
+            """
+        ).strip()
+    )
 
 
 def main() -> int:
@@ -99,6 +100,7 @@ def main() -> int:
     parser.add_argument("--block-regex", action="append", default=[])
     parser.add_argument("--rules", default="")
     parser.add_argument("--json-output", default="report.json")
+    parser.add_argument("--html-output", default="")
     parser.add_argument("--lbs", type=int, default=2)
     parser.add_argument("--fps", type=int, default=2)
     parser.add_argument("--suspicious-profile", choices=sorted(SUSPICIOUS_PROFILES.keys()), default="balanced")
@@ -154,7 +156,12 @@ def main() -> int:
     for pattern in args.block_regex:
         engine.block_regex(pattern)
 
-    if not engine.process_file(args.input_file, args.output_file, json_output_file=args.json_output):
+    if not engine.process_file(
+        args.input_file,
+        args.output_file,
+        json_output_file=args.json_output,
+        html_output_file=args.html_output,
+    ):
         print("Failed to process file")
         return 1
 
