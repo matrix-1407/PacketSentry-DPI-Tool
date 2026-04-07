@@ -18,9 +18,10 @@ The goal of this repository is educational and practical: it shows how packet pa
 10. [Running PacketSentry](#running-packetsentry)
 11. [Windows PowerShell](#windows-powershell)
 12. [Output Overview](#output-overview)
-13. [Project Notes](#project-notes)
-14. [Troubleshooting](#troubleshooting)
-15. [Summary](#summary)
+13. [AI Features Overview](#ai-features-overview)
+14. [Project Notes](#project-notes)
+15. [Troubleshooting](#troubleshooting)
+16. [Summary](#summary)
 
 ## What PacketSentry Does
 
@@ -547,6 +548,18 @@ Facebook   3
     - www.youtube.com -> YouTube
     - www.facebook.com -> Facebook
 ```
+
+## AI Features Overview
+
+PacketSentry includes a lightweight AI layer designed to surface anomalous and risky flows without changing the core DPI logic.
+
+- **Feature extraction:** Per-flow features are derived after classification and rule checks (packet/byte counts, duration, average packet size, protocol, app type, and encryption flag).
+- **Anomaly detection:** An optional `IsolationForest` model (from scikit-learn) scores flows and produces a normalized `anomaly_score`.
+- **Risk scoring:** `risk_score` combines anomaly score with heuristic signals (unknown app, suspicious flags, and block status) and maps to `Low`, `Medium`, or `High` labels.
+- **Fallback behavior:** If scikit-learn is not available, the engine still runs and computes risk from heuristic signals while marking the model as disabled.
+
+AI runs after flow aggregation and heuristic suspicious detection, so reports include both explainable rules and model-based signals. To enable model-driven scoring, install scikit-learn and run the same commands as usual.
+
 
 ## Project Notes
 
